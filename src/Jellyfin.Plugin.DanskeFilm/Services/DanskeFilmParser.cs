@@ -296,14 +296,21 @@ public class DanskeFilmParser
     private static int? ParseRuntimeMinutes(HtmlDocument doc)
     {
         var smallNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//small");
-        var text = Clean(smallNode?.InnerText);
-
-        if (string.IsNullOrWhiteSpace(text))
+        if (smallNode is null)
         {
             return null;
         }
 
-        var match = Regex.Match(text, @"(\d+)\s*min\.", RegexOptions.IgnoreCase);
+        var html = smallNode.InnerHtml ?? string.Empty;
+
+        // Bevar separator mellem linjer før tags fjernes
+        html = Regex.Replace(html, @"<br\s*/?>", " ", RegexOptions.IgnoreCase);
+
+        var text = WebUtility.HtmlDecode(html);
+        text = Regex.Replace(text, "<.*?>", " ");
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+
+        var match = Regex.Match(text, @"\b(\d{1,3})\s*min\.?\b", RegexOptions.IgnoreCase);
         return match.Success && int.TryParse(match.Groups[1].Value, out var minutes) ? minutes : null;
     }
 
