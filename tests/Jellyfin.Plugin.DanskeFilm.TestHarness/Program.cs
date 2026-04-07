@@ -62,21 +62,52 @@ switch (command)
         var html = await client.GetMoviePageAsync(id, CancellationToken.None);
         var data = parser.ParseMoviePage(html, $"https://www.danskefilm.dk/film.php?id={id}");
 
-        Console.WriteLine($"ID:           {id}");
-        Console.WriteLine($"Titel:        {data.Title}");
-        Console.WriteLine($"År:           {data.Year}");
-        Console.WriteLine($"Instruktør:   {data.Director}");
-        Console.WriteLine($"Poster:       {data.PosterUrl}");
+        Console.WriteLine($"ID:             {id}");
+        Console.WriteLine($"Titel:          {data.Title}");
+        Console.WriteLine($"År:             {data.Year}");
+        Console.WriteLine($"Premiere:       {data.PremiereDate}");
+        Console.WriteLine($"Runtime:        {data.RuntimeMinutes}");
+        Console.WriteLine($"Instruktør:     {data.Director}");
+        Console.WriteLine($"Poster:         {data.PosterUrl}");
+        Console.WriteLine($"Trailer:        {data.TrailerUrl}");
         Console.WriteLine();
 
+        Console.WriteLine("Studios:");
+        foreach (var studio in data.Studios)
+        {
+            Console.WriteLine($"- {studio}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Writers:");
+        foreach (var writer in data.Writers)
+        {
+            Console.WriteLine($"- {writer}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Genres:");
+        foreach (var genre in data.Genres)
+        {
+            Console.WriteLine($"- {genre}");
+        }
+
+        Console.WriteLine();
         Console.WriteLine("Plot:");
         Console.WriteLine(data.Overview);
         Console.WriteLine();
 
         Console.WriteLine("Cast:");
-        foreach (var actor in data.Cast.Take(30))
+        foreach (var actor in data.Cast.Take(40))
         {
-            Console.WriteLine($"- {actor}");
+            if (string.IsNullOrWhiteSpace(actor.Role))
+            {
+                Console.WriteLine($"- {actor.Name}");
+            }
+            else
+            {
+                Console.WriteLine($"- {actor.Name} => {actor.Role}");
+            }
         }
 
         Console.WriteLine();

@@ -140,7 +140,6 @@ public class DanskeFilmMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             movie.AddGenre(genre);
         }
 
-        // 🔥 FIX: korrekt måde i din version af Jellyfin
         movie.ProviderIds["DanskeFilm"] = danskefilmId;
 
         if (!string.IsNullOrWhiteSpace(data.Director))
@@ -152,11 +151,21 @@ public class DanskeFilmMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             });
         }
 
-        foreach (var actor in data.Cast.Where(x => !string.IsNullOrWhiteSpace(x)))
+        foreach (var writer in data.Writers.Where(x => !string.IsNullOrWhiteSpace(x)))
         {
             result.AddPerson(new PersonInfo
             {
-                Name = actor.Trim(),
+                Name = writer.Trim(),
+                Type = PersonKind.Writer
+            });
+        }
+
+        foreach (var actor in data.Cast.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
+        {
+            result.AddPerson(new PersonInfo
+            {
+                Name = actor.Name.Trim(),
+                Role = string.IsNullOrWhiteSpace(actor.Role) ? null : actor.Role.Trim(),
                 Type = PersonKind.Actor
             });
         }

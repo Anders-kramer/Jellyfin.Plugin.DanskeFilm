@@ -14,11 +14,21 @@ public class DanskeFilmMovieData
 
     public string? Director { get; set; }
 
-    public List<string> Cast { get; set; } = [];
+    public List<DanskeFilmCastMember> Cast { get; set; } = [];
+
+    public List<string> Writers { get; set; } = [];
+
+    public List<string> Studios { get; set; } = [];
 
     public List<string> Genres { get; set; } = [];
 
     public string? PosterUrl { get; set; }
 
     public List<string> ImageUrls { get; set; } = [];
+
+    public string? PremiereDate { get; set; }
+
+    public int? RuntimeMinutes { get; set; }
+
+    public string? TrailerUrl { get; set; }
 }

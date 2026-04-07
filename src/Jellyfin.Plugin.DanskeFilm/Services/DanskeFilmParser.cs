@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
@@ -54,8 +55,14 @@ public class DanskeFilmParser
             Overview = ParseOverview(doc),
             Director = ParseDirector(doc),
             Cast = ParseCast(doc),
+            Writers = ParseWriters(doc),
+            Studios = ParseStudios(doc),
+            Genres = ParseGenres(doc),
             PosterUrl = ParsePosterUrl(doc, html, filmId),
-            ImageUrls = ParseImageUrls(doc, html, filmId)
+            ImageUrls = ParseImageUrls(doc, html, filmId),
+            PremiereDate = ParsePremiereDate(doc),
+            RuntimeMinutes = ParseRuntimeMinutes(doc),
+            TrailerUrl = ParseTrailerUrl(doc)
         };
     }
 
@@ -68,19 +75,14 @@ public class DanskeFilmParser
 
     private static string? ParseTitle(HtmlDocument doc)
     {
-        var h1 = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//h4[contains(@class,'media-heading')]//b");
-        if (h1 is not null)
-        {
-            return Clean(h1.InnerText);
-        }
-
-        var titleNode = doc.DocumentNode.SelectSingleNode("//title");
+        var titleNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//h4[contains(@class,'media-heading')]//b");
         if (titleNode is not null)
         {
-            return StripYearFromTitle(Clean(titleNode.InnerText));
+            return Clean(titleNode.InnerText);
         }
 
-        return null;
+        var fallback = doc.DocumentNode.SelectSingleNode("//title");
+        return fallback is null ? null : StripYearFromTitle(Clean(fallback.InnerText));
     }
 
     private static int? ParseYear(HtmlDocument doc)
@@ -88,15 +90,15 @@ public class DanskeFilmParser
         var titleNode = doc.DocumentNode.SelectSingleNode("//title");
         if (titleNode is not null)
         {
-            var fromTitle = TryParseYear(Clean(titleNode.InnerText));
-            if (fromTitle.HasValue)
+            var year = TryParseYear(Clean(titleNode.InnerText));
+            if (year.HasValue)
             {
-                return fromTitle;
+                return year;
             }
         }
 
-        var headingText = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//h4")?.InnerText;
-        return TryParseYear(Clean(headingText));
+        var mediaHeading = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//h4");
+        return TryParseYear(Clean(mediaHeading?.InnerText));
     }
 
     private static string? ParseOverview(HtmlDocument doc)
@@ -108,7 +110,6 @@ public class DanskeFilmParser
         }
 
         var text = Clean(descriptionDiv.InnerText);
-
         text = Regex.Replace(text, @"^\s*Beskrivelse\s*", "", RegexOptions.IgnoreCase).Trim();
         text = Regex.Replace(text, @"\s*vis mere\s*$", "", RegexOptions.IgnoreCase).Trim();
 
@@ -117,16 +118,134 @@ public class DanskeFilmParser
 
     private static string? ParseDirector(HtmlDocument doc)
     {
+        var creditsRows = GetCreditsRows(doc);
+        foreach (var row in creditsRows)
+        {
+            if (row.Label.Equals("Instruktion", StringComparison.OrdinalIgnoreCase) ||
+                row.Label.Equals("Instruktør", StringComparison.OrdinalIgnoreCase))
+            {
+                return row.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static List<string> ParseWriters(HtmlDocument doc)
+    {
+        return GetCreditsRows(doc)
+            .Where(x => x.Label.Equals("Manuskript", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Value)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ParseStudios(HtmlDocument doc)
+    {
+        return GetCreditsRows(doc)
+            .Where(x => x.Label.Equals("Produktionsselskab", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Value)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ParseGenres(HtmlDocument doc)
+    {
+        var result = new List<string>();
+
+        var smallNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//small");
+        var text = Clean(smallNode?.InnerText);
+
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var firstPart = text.Split('.').FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(firstPart))
+            {
+                result.Add(firstPart.Trim());
+            }
+        }
+
+        return result
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<DanskeFilmCastMember> ParseCast(HtmlDocument doc)
+    {
+        var castTable = GetSectionTable(doc, "Medvirkende");
+        if (castTable is null)
+        {
+            return [];
+        }
+
+        var rows = castTable.SelectNodes(".//tbody/tr");
+        if (rows is null)
+        {
+            return [];
+        }
+
+        var result = new List<DanskeFilmCastMember>();
+
+        foreach (var row in rows)
+        {
+            var nameLink = row.SelectSingleNode("./td[1]//a[contains(@href, 'skuespiller.php?id=')]");
+            if (nameLink is null)
+            {
+                continue;
+            }
+
+            var name = Clean(nameLink.InnerText);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var roleCell = row.SelectSingleNode("./td[2]");
+            var role = Clean(roleCell?.InnerText);
+            if (string.IsNullOrWhiteSpace(role))
+            {
+                role = null;
+            }
+
+            var profileUrl = nameLink.GetAttributeValue("href", string.Empty);
+            profileUrl = string.IsNullOrWhiteSpace(profileUrl) ? null : ToAbsoluteUrl(profileUrl);
+
+            result.Add(new DanskeFilmCastMember
+            {
+                Name = name,
+                Role = role,
+                ProfileUrl = profileUrl
+            });
+        }
+
+        return result
+            .GroupBy(x => $"{x.Name}|||{x.Role}", StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .ToList();
+    }
+
+    private static HtmlNode? GetSectionTable(HtmlDocument doc, string sectionName)
+    {
+        return doc.DocumentNode.SelectSingleNode(
+            $"//table[.//thead//b[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), '{sectionName.ToLowerInvariant()}')]]");
+    }
+
+    private static List<(string Label, string Value)> GetCreditsRows(HtmlDocument doc)
+    {
+        var result = new List<(string Label, string Value)>();
         var creditsTable = GetSectionTable(doc, "Kredits");
         if (creditsTable is null)
         {
-            return null;
+            return result;
         }
 
-        var rows = creditsTable.SelectNodes(".//tr");
+        var rows = creditsTable.SelectNodes(".//tbody/tr");
         if (rows is null)
         {
-            return null;
+            return result;
         }
 
         foreach (var row in rows)
@@ -140,41 +259,64 @@ public class DanskeFilmParser
             var label = Clean(cells[0].InnerText);
             var value = Clean(cells[1].InnerText);
 
-            if (label.Equals("Instruktion", StringComparison.OrdinalIgnoreCase) ||
-                label.Equals("Instruktør", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(label) && !string.IsNullOrWhiteSpace(value))
             {
-                return string.IsNullOrWhiteSpace(value) ? null : value;
+                result.Add((label, value));
             }
+        }
+
+        return result;
+    }
+
+    private static string? ParsePremiereDate(HtmlDocument doc)
+    {
+        var smallNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//small");
+        var text = Clean(smallNode?.InnerText);
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(text, @"Premiere:\s*(\d{1,2}/\d{1,2}-\d{4})", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        if (DateTime.TryParseExact(match.Groups[1].Value, "d/M-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ||
+            DateTime.TryParseExact(match.Groups[1].Value, "dd/MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+        {
+            return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         }
 
         return null;
     }
 
-    private static List<string> ParseCast(HtmlDocument doc)
+    private static int? ParseRuntimeMinutes(HtmlDocument doc)
     {
-        var castTable = GetSectionTable(doc, "Medvirkende");
-        if (castTable is null)
+        var smallNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//small");
+        var text = Clean(smallNode?.InnerText);
+
+        if (string.IsNullOrWhiteSpace(text))
         {
-            return [];
+            return null;
         }
 
-        var actorLinks = castTable.SelectNodes(".//tbody//a[contains(@href, 'skuespiller.php?id=')]");
-        if (actorLinks is null)
-        {
-            return [];
-        }
-
-        return actorLinks
-            .Select(x => Clean(x.InnerText))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var match = Regex.Match(text, @"(\d+)\s*min\.", RegexOptions.IgnoreCase);
+        return match.Success && int.TryParse(match.Groups[1].Value, out var minutes) ? minutes : null;
     }
 
-    private static HtmlNode? GetSectionTable(HtmlDocument doc, string sectionName)
+    private static string? ParseTrailerUrl(HtmlDocument doc)
     {
-        return doc.DocumentNode.SelectSingleNode(
-            $"//table[.//thead//b[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), '{sectionName.ToLowerInvariant()}')]]");
+        var sourceNode = doc.DocumentNode.SelectSingleNode("//video/source[@src]");
+        if (sourceNode is null)
+        {
+            return null;
+        }
+
+        var src = sourceNode.GetAttributeValue("src", string.Empty);
+        return string.IsNullOrWhiteSpace(src) ? null : ToAbsoluteUrl(src);
     }
 
     private static string? ParsePosterUrl(HtmlDocument doc, string html, string filmId)
@@ -187,7 +329,6 @@ public class DanskeFilmParser
     {
         var results = new List<string>();
 
-        // 1. bedst: parse popup-gallery script med store billeder
         var popupPattern = $@"src:\s*[""'](?<url>//danskefilm\.dk/film_billeder/{Regex.Escape(filmId)}[a-z]*sn\.jpg)[""']";
         foreach (Match match in Regex.Matches(html, popupPattern, RegexOptions.IgnoreCase))
         {
@@ -198,7 +339,6 @@ public class DanskeFilmParser
             }
         }
 
-        // 2. fallback: thumbnails på selve siden for samme film-id
         if (results.Count == 0)
         {
             var imageNodes = doc.DocumentNode.SelectNodes("//img[contains(@src, '/film_billeder/')]");
