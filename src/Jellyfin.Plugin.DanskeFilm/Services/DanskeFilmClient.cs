@@ -34,4 +34,10 @@ public class DanskeFilmClient
         var url = $"https://www.danskefilm.dk/film.php?id={Uri.EscapeDataString(id)}";
         return await GetStringAsync(url, cancellationToken);
     }
+
+    public async Task<string> GetPersonPageAsync(string id, CancellationToken cancellationToken)
+    {
+        var url = $"https://www.danskefilm.dk/skuespiller.php?id={Uri.EscapeDataString(id)}";
+        return await GetStringAsync(url, cancellationToken);
+    }
 }

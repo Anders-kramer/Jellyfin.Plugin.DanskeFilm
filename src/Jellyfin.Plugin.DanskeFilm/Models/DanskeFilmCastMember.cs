@@ -7,4 +7,6 @@ public class DanskeFilmCastMember
     public string? Role { get; set; }
 
     public string? ProfileUrl { get; set; }
+
+    public string? PersonId { get; set; }
 }
