@@ -162,12 +162,22 @@ public class DanskeFilmMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
         foreach (var actor in data.Cast.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
         {
-            result.AddPerson(new PersonInfo
+            var person = new PersonInfo
             {
                 Name = actor.Name.Trim(),
                 Role = string.IsNullOrWhiteSpace(actor.Role) ? null : actor.Role.Trim(),
                 Type = PersonKind.Actor
-            });
+            };
+
+            if (!string.IsNullOrWhiteSpace(actor.PersonId))
+            {
+                person.ProviderIds = new Dictionary<string, string>
+                {
+                    { "DanskeFilm", actor.PersonId! }
+                };
+            }
+
+            result.AddPerson(person);
         }
     }
 }
