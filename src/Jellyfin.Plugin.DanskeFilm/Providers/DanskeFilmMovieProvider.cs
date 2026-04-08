@@ -265,6 +265,29 @@ public class DanskeFilmMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             });
         }
 
+        foreach (var credit in data.Credits.Where(x => !string.IsNullOrWhiteSpace(x.Name) && !string.IsNullOrWhiteSpace(x.Role)))
+        {
+            var role = credit.Role.ToLowerInvariant();
+
+            PersonKind? type = role switch
+            {
+                var r when r.Contains("instruktion") => PersonKind.Director,
+                var r when r.Contains("producent") => PersonKind.Producer,
+                var r when r.Contains("musik") => PersonKind.Composer,
+                var r when r.Contains("drejebog") => PersonKind.Writer,
+                _ => null
+            };
+
+            if (type is not null)
+            {
+                result.AddPerson(new PersonInfo
+                {
+                    Name = credit.Name.Trim(),
+                    Type = type.Value
+                });
+            }
+        }
+
         foreach (var actor in data.Cast.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
         {
             var person = new PersonInfo

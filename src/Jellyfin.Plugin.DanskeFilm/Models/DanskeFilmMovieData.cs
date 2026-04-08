@@ -31,4 +31,6 @@ public class DanskeFilmMovieData
     public int? RuntimeMinutes { get; set; }
 
     public string? TrailerUrl { get; set; }
+
+    public List<DanskeFilmCredit> Credits { get; set; } = [];
 }
