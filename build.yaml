@@ -1,0 +1,14 @@
+name: "DanskeFilm Metadata"
+guid: "5d0f9df8-9fc2-4a31-a4a0-6ad6fe7df301"
+version: 1
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "Anders-kramer"
+overview: "Danish movie and actor metadata from danskefilm.dk"
+description: >
+  Metadata provider for Danish films and actors using danskefilm.dk.
+category: "Metadata"
+artifacts:
+  - "Jellyfin.Plugin.DanskeFilm.dll"
+changelog: |-
+  - Initial Jellyfin 10.11 / .NET 9 migration
