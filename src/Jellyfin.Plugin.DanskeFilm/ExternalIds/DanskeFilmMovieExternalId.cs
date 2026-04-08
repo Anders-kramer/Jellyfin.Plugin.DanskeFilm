@@ -1,24 +1,24 @@
-using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 
 namespace Jellyfin.Plugin.DanskeFilm.ExternalIds;
 
-public class DanskeFilmExternalId : IExternalId
+public class DanskeFilmMovieExternalId : IExternalId
 {
-    public string Name => "DanskeFilm";
+    public string Name => "DanskeFilm Movie Id";
 
     public string Key => "DanskeFilm";
+
+    public string? UrlFormatString => "https://www.danskefilm.dk/film.php?id={0}";
 
     public string ProviderName => "DanskeFilm";
 
     public ExternalIdMediaType? Type => ExternalIdMediaType.Movie;
 
-    public string UrlFormatString => "https://www.danskefilm.dk/film.php?id={0}";
-
     public bool Supports(IHasProviderIds item)
     {
-        return item is Video;
+        return item is Movie;
     }
 }

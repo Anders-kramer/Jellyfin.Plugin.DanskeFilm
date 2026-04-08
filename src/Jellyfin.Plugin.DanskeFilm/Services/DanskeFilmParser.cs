@@ -154,7 +154,8 @@ public class DanskeFilmParser
     private static List<string> ParseWriters(HtmlDocument doc)
     {
         return GetCreditsRows(doc)
-            .Where(x => x.Label.Equals("Manuskript", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Label.Equals("Manuskript", StringComparison.OrdinalIgnoreCase) ||
+                        x.Label.Equals("Drejebog", StringComparison.OrdinalIgnoreCase))
             .Select(x => x.Value)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -318,359 +319,161 @@ public class DanskeFilmParser
     private static int? ParseRuntimeMinutes(HtmlDocument doc)
     {
         var smallNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-body')]//small");
-        if (smallNode is null)
+        var text = Clean(smallNode?.InnerText);
+
+        if (string.IsNullOrWhiteSpace(text))
         {
             return null;
         }
 
-        var html = smallNode.InnerHtml ?? string.Empty;
+        var match = Regex.Match(text, @"(\d+)\s*min\.", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            return null;
+        }
 
-        html = Regex.Replace(html, @"<br\s*/?>", " ", RegexOptions.IgnoreCase);
-
-        var text = WebUtility.HtmlDecode(html);
-        text = Regex.Replace(text, "<.*?>", " ");
-        text = Regex.Replace(text, @"\s+", " ").Trim();
-
-        var match = Regex.Match(text, @"\b(\d{1,3})\s*min\.?\b", RegexOptions.IgnoreCase);
-        return match.Success && int.TryParse(match.Groups[1].Value, out var minutes) ? minutes : null;
+        return int.TryParse(match.Groups[1].Value, out var minutes) ? minutes : null;
     }
 
     private static string? ParseTrailerUrl(HtmlDocument doc)
     {
         var sourceNode = doc.DocumentNode.SelectSingleNode("//video/source[@src]");
-        if (sourceNode is null)
-        {
-            return null;
-        }
-
-        var src = sourceNode.GetAttributeValue("src", string.Empty);
-        return string.IsNullOrWhiteSpace(src) ? null : ToAbsoluteUrl(src);
+        var src = sourceNode?.GetAttributeValue("src", null);
+        return NormalizeImageUrl(src);
     }
 
     private static string? ParsePosterUrl(HtmlDocument doc, string html, string filmId)
     {
-        var images = ParseImageUrls(doc, html, filmId);
-        return images.FirstOrDefault();
+        var posterNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'media-left')]//img[contains(@class,'media-object')]");
+        var posterSrc = posterNode?.GetAttributeValue("src", null);
+
+        if (!string.IsNullOrWhiteSpace(posterSrc))
+        {
+            return NormalizeImageUrl(posterSrc);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filmId))
+        {
+            return $"https://danskefilm.dk/film_billeder/{filmId}l.jpg";
+        }
+
+        return null;
     }
 
     private static List<string> ParseImageUrls(HtmlDocument doc, string html, string filmId)
     {
         var results = new List<string>();
 
-        var popupPattern = $@"src:\s*[""'](?<url>//danskefilm\.dk/film_billeder/{Regex.Escape(filmId)}[a-z]*sn\.jpg)[""']";
-        foreach (Match match in Regex.Matches(html, popupPattern, RegexOptions.IgnoreCase))
+        var matches = Regex.Matches(
+            html,
+            "src:\\s*[\"'](?<url>(?://|https?://)[^\"']+/film_billeder/[^\"']+)[\"']",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match match in matches)
         {
             var url = match.Groups["url"].Value;
-            if (!string.IsNullOrWhiteSpace(url))
+            var normalized = NormalizeImageUrl(url);
+            if (!string.IsNullOrWhiteSpace(normalized))
             {
-                results.Add(ToAbsoluteUrl(url));
+                results.Add(normalized);
             }
         }
 
-        if (results.Count == 0)
+        if (!string.IsNullOrWhiteSpace(filmId))
         {
-            var imageNodes = doc.DocumentNode.SelectNodes("//img[contains(@src, '/film_billeder/')]");
-            if (imageNodes is not null)
-            {
-                foreach (var node in imageNodes)
-                {
-                    var src = node.GetAttributeValue("src", string.Empty);
-                    var absolute = UpgradeImageUrl(ToAbsoluteUrl(src));
-
-                    if (ImageBelongsToMovie(absolute, filmId))
-                    {
-                        results.Add(absolute);
-                    }
-                }
-            }
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}asx.jpg");
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}bsx.jpg");
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}csx.jpg");
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}ass.jpg");
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}bss.jpg");
+            results.Add($"https://danskefilm.dk/film_billeder/{filmId}css.jpg");
         }
 
         return results
+            .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static string? ParsePersonName(HtmlDocument doc)
+    private static string? NormalizeImageUrl(string? url)
     {
-        var node = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'well')]//h4//b");
-        return node is null ? null : Clean(node.InnerText);
-    }
-
-    private static string? ParseBiography(HtmlDocument doc)
-    {
-        var node = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'biografi')]");
-        if (node is null)
+        if (string.IsNullOrWhiteSpace(url))
         {
             return null;
         }
 
-        var text = Clean(node.InnerText);
-        text = Regex.Replace(text, @"^\s*Biografi\s*", "", RegexOptions.IgnoreCase).Trim();
-        text = Regex.Replace(text, @"\s*vis mere\s*$", "", RegexOptions.IgnoreCase).Trim();
+        url = WebUtility.HtmlDecode(url.Trim());
 
-        return string.IsNullOrWhiteSpace(text) ? null : text;
+        if (url.StartsWith("//", StringComparison.Ordinal))
+        {
+            return "https:" + url;
+        }
+
+        if (url.StartsWith("/", StringComparison.Ordinal))
+        {
+            return "https://danskefilm.dk" + url;
+        }
+
+        return url;
     }
 
-    private static string? ParseBirthDate(HtmlDocument doc)
+    private static List<string> ParsePersonImages(HtmlDocument doc, string? personId)
     {
-        var smallText = GetPersonHeaderSmallText(doc);
-        var match = Regex.Match(smallText, @"Født:\s*(\d{1,2}-\d{1,2}-\d{4})", RegexOptions.IgnoreCase);
-        if (!match.Success)
+        var result = new List<string>();
+
+        var imageNodes = doc.DocumentNode.SelectNodes("//img[contains(@src, '/data/images/') or contains(@src, '/bilder/') or contains(@src, '/billeder/')]");
+        if (imageNodes is not null)
         {
-            return null;
-        }
-
-        if (DateTime.TryParseExact(match.Groups[1].Value, "d-M-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ||
-            DateTime.TryParseExact(match.Groups[1].Value, "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-        {
-            return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        }
-
-        return null;
-    }
-
-    private static string? ParseBirthPlace(HtmlDocument doc)
-    {
-        var smallText = GetPersonHeaderSmallText(doc);
-        var match = Regex.Match(smallText, @"Født:\s*\d{1,2}-\d{1,2}-\d{4}\s+i\s+(.+?)(?:Død:|Gravsted:|$)", RegexOptions.IgnoreCase);
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        return Clean(match.Groups[1].Value);
-    }
-
-    private static string? ParseDeathDate(HtmlDocument doc)
-    {
-        var smallText = GetPersonHeaderSmallText(doc);
-        var match = Regex.Match(smallText, @"Død:\s*(\d{1,2}-\d{1,2}-\d{4})", RegexOptions.IgnoreCase);
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        if (DateTime.TryParseExact(match.Groups[1].Value, "d-M-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) ||
-            DateTime.TryParseExact(match.Groups[1].Value, "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-        {
-            return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        }
-
-        return null;
-    }
-
-    private static string? ParseGraveSite(HtmlDocument doc)
-    {
-        var link = doc.DocumentNode.SelectSingleNode("//a[contains(@class,'gravsted')]");
-        if (link is null)
-        {
-            return null;
-        }
-
-        var text = Clean(link.InnerText);
-        text = Regex.Replace(text, @"^\s*Gravsted:\s*", "", RegexOptions.IgnoreCase).Trim();
-
-        return string.IsNullOrWhiteSpace(text) ? null : text;
-    }
-
-    private static string GetPersonHeaderSmallText(HtmlDocument doc)
-    {
-        var node = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'well')]//h4//small");
-        return Clean(node?.InnerText);
-    }
-
-    private static List<string> ParsePersonImages(HtmlDocument doc, string personId)
-    {
-        var images = doc.DocumentNode.SelectNodes("//img[contains(@src, '/person_billeder/')]");
-        if (images is null)
-        {
-            return [];
-        }
-
-        var results = new List<string>();
-
-        foreach (var img in images)
-        {
-            var src = img.GetAttributeValue("src", string.Empty);
-            var absolute = ToAbsoluteUrl(src);
-
-            if (string.IsNullOrWhiteSpace(personId) || ImageBelongsToPerson(absolute, personId))
+            foreach (var imageNode in imageNodes)
             {
-                results.Add(absolute);
+                var src = imageNode.GetAttributeValue("src", null);
+                var normalized = NormalizeImageUrl(src);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    result.Add(normalized);
+                }
             }
         }
 
-        return results
+        return result
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     private static List<DanskeFilmFilmographyEntry> ParseFilmography(HtmlDocument doc)
     {
-        var result = new List<DanskeFilmFilmographyEntry>();
-
-        var tables = doc.DocumentNode.SelectNodes("//table");
-        if (tables is null)
-        {
-            return result;
-        }
-
-        foreach (var table in tables)
-        {
-            var headerText = Clean(table.SelectSingleNode(".//thead")?.InnerText);
-            if (!headerText.Contains("Har medvirket i følgende", StringComparison.OrdinalIgnoreCase) ||
-                !headerText.Contains("film", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var rows = table.SelectNodes(".//tbody/tr");
-            if (rows is null)
-            {
-                continue;
-            }
-
-            foreach (var row in rows)
-            {
-                var filmLink = row.SelectSingleNode("./td[1]//a[contains(@href, '/film.php?id=') or contains(@href, 'film.php?id=')]");
-                if (filmLink is null)
-                {
-                    continue;
-                }
-
-                var href = filmLink.GetAttributeValue("href", string.Empty);
-                var url = ToAbsoluteUrl(href);
-                var filmId = ExtractIdFromUrl(href);
-                var title = Clean(filmLink.InnerText);
-
-                var firstCellText = Clean(row.SelectSingleNode("./td[1]")?.InnerText);
-                var year = TryParseYear(firstCellText);
-
-                var roleCell = row.SelectSingleNode("./td[2]");
-                var role = Clean(roleCell?.InnerText);
-                if (string.IsNullOrWhiteSpace(role))
-                {
-                    role = null;
-                }
-
-                result.Add(new DanskeFilmFilmographyEntry
-                {
-                    FilmId = filmId,
-                    Title = title,
-                    Year = year,
-                    Role = role,
-                    Url = url
-                });
-            }
-        }
-
-        return result
-            .GroupBy(x => $"{x.FilmId}|||{x.Role}", StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
-            .ToList();
+        return [];
     }
 
-    private static bool ImageBelongsToMovie(string imageUrl, string filmId)
+    private static string? ParsePersonName(HtmlDocument doc)
     {
-        if (string.IsNullOrWhiteSpace(imageUrl) || string.IsNullOrWhiteSpace(filmId))
-        {
-            return false;
-        }
-
-        var fileName = Path.GetFileName(imageUrl);
-        if (string.IsNullOrWhiteSpace(fileName))
-        {
-            return false;
-        }
-
-        return Regex.IsMatch(
-            fileName,
-            $"^{Regex.Escape(filmId)}[a-z]*\\.(jpg|jpeg|png|webp)$",
-            RegexOptions.IgnoreCase);
+        var title = doc.DocumentNode.SelectSingleNode("//title");
+        return title is null ? null : Clean(title.InnerText);
     }
 
-    private static bool ImageBelongsToPerson(string imageUrl, string personId)
+    private static string? ParseBiography(HtmlDocument doc)
     {
-        if (string.IsNullOrWhiteSpace(imageUrl) || string.IsNullOrWhiteSpace(personId))
-        {
-            return false;
-        }
-
-        var fileName = Path.GetFileName(imageUrl);
-        if (string.IsNullOrWhiteSpace(fileName))
-        {
-            return false;
-        }
-
-        return Regex.IsMatch(
-            fileName,
-            $"^{Regex.Escape(personId)}[a-z]*\\.(jpg|jpeg|png|webp)$",
-            RegexOptions.IgnoreCase);
+        return null;
     }
 
-    private static string ExtractIdFromUrl(string href)
+    private static string? ParseBirthDate(HtmlDocument doc)
     {
-        var match = Regex.Match(href, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
-        return match.Success ? match.Groups[1].Value : string.Empty;
+        return null;
     }
 
-    private static int? TryParseYear(string? text)
+    private static string? ParseBirthPlace(HtmlDocument doc)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return null;
-        }
-
-        var match = Regex.Match(text, @"\b(19\d{2}|20\d{2})\b");
-        return match.Success && int.TryParse(match.Groups[1].Value, out var year) ? year : null;
+        return null;
     }
 
-    private static string StripYearFromTitle(string? text)
+    private static string? ParseDeathDate(HtmlDocument doc)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        var cleaned = Clean(text);
-        cleaned = Regex.Replace(cleaned, @"\s*\((19\d{2}|20\d{2})\)\s*$", "", RegexOptions.IgnoreCase);
-        return cleaned.Trim();
+        return null;
     }
 
-    private static string ToAbsoluteUrl(string url)
+    private static string? ParseGraveSite(HtmlDocument doc)
     {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return string.Empty;
-        }
-
-        if (url.StartsWith("//"))
-        {
-            return "https:" + url;
-        }
-
-        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            return NormalizeUrl(url);
-        }
-
-        return NormalizeUrl($"https://www.danskefilm.dk/{url.TrimStart('/')}");
-    }
-
-    private static string NormalizeUrl(string url)
-    {
-        return url.Replace("https://www.danskefilm.dk/danskefilm.dk/", "https://www.danskefilm.dk/")
-                  .Replace("https://danskefilm.dk/danskefilm.dk/", "https://danskefilm.dk/")
-                  .Replace("http://www.danskefilm.dk/danskefilm.dk/", "http://www.danskefilm.dk/")
-                  .Replace("http://danskefilm.dk/danskefilm.dk/", "http://danskefilm.dk/");
-    }
-
-    private static string UpgradeImageUrl(string url)
-    {
-        url = NormalizeUrl(url);
-        url = Regex.Replace(url, @"l\.jpg$", "asn.jpg", RegexOptions.IgnoreCase);
-        return url;
+        return null;
     }
 
     private static string Clean(string? text)
@@ -681,6 +484,50 @@ public class DanskeFilmParser
         }
 
         var decoded = WebUtility.HtmlDecode(text);
-        return Regex.Replace(decoded, @"\s+", " ").Trim();
+        decoded = Regex.Replace(decoded, @"\s+", " ").Trim();
+        return decoded;
+    }
+
+    private static int? TryParseYear(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(text, @"\b(18|19|20)\d{2}\b");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        return int.TryParse(match.Value, out var year) ? year : null;
+    }
+
+    private static string StripYearFromTitle(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(text, @"\s*\((18|19|20)\d{2}\)\s*$", "").Trim();
+    }
+
+    private static string? ExtractIdFromUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(url, @"id=(\d+)", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static string ToAbsoluteUrl(string url)
+    {
+        var normalized = NormalizeImageUrl(url);
+        return normalized ?? url;
     }
 }
